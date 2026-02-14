@@ -1,0 +1,47 @@
+package com.concurrency.queue;
+
+public class BlockingBoundedQueue<T> {
+    private final int capacity;
+    private final T[] queue;
+    private int head;
+    private int tail;
+    private int size;
+
+
+    public BlockingBoundedQueue(int capacity) {
+        this.size = 0;
+        this.capacity = capacity;
+        this.queue = (T[]) new Object[capacity];
+        this.head = 0;
+        this.tail = 0;
+    }
+
+    public void put(T object) throws InterruptedException {
+        synchronized (this) {
+            while (size == capacity) {
+                this.wait(); // release the lock and acquire upon wakes up
+            }
+
+            queue[tail] = object;
+            tail = (tail + 1) % capacity;
+            size += 1;
+            this.notifyAll(); // release lock that it is available to take
+        }
+
+    }
+
+    public T take() throws InterruptedException {
+        T object;
+        synchronized (this) {
+            while (size == 0) {
+                this.wait();
+            }
+            object = queue[head];
+            head = (head + 1) % capacity;
+            size -= 1;
+            this.notifyAll();
+        }
+        return object;
+
+    }
+}
