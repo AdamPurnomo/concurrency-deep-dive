@@ -1,5 +1,8 @@
 package com.concurrency.queue;
 
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
+
 public class BlockingBoundedQueue<T> {
     private final int capacity;
     private final T[] queue;
@@ -7,18 +10,22 @@ public class BlockingBoundedQueue<T> {
     private int tail;
     private int size;
 
-    private final Object lock;
+    private final ReentrantLock lock;
+    private final Condition notFull;
+    private final Condition notEmpty;
 
     public BlockingBoundedQueue(int capacity) {
         if (capacity <= 0) {
-            throw new IllegalArgumentException("Capacity cannot be null");
+            throw new IllegalArgumentException("Capacity must be greater than 0");
         }
         this.capacity = capacity;
         this.queue = (T[]) new Object[capacity];
         this.head = 0;
         this.tail = 0;
         this.size = 0;
-        this.lock = new Object();
+        this.lock = new ReentrantLock();
+        this.notFull = lock.newCondition();
+        this.notEmpty = lock.newCondition();
     }
 
     public void put(T object) throws InterruptedException {
@@ -26,32 +33,36 @@ public class BlockingBoundedQueue<T> {
             throw new IllegalArgumentException("Inserted object cannot be null");
         }
 
-        synchronized (lock) {
+        lock.lockInterruptibly();
+        try {
             while (size == capacity) {
-                lock.wait(); // release the lock and acquire upon wakes up
+                notFull.await();
             }
 
             queue[tail] = object;
             tail = (tail + 1) % capacity;
             size += 1;
-            lock.notifyAll(); // release lock that it is available to take
+            notEmpty.signal();
+        } finally {
+            lock.unlock();
         }
-
     }
 
     public T take() throws InterruptedException {
-        T object;
-        synchronized (lock) {
+        lock.lockInterruptibly();
+        try {
             while (size == 0) {
-                lock.wait();
+                notEmpty.await();
             }
-            object = queue[head];
+
+            T object = queue[head];
             queue[head] = null;
             head = (head + 1) % capacity;
             size -= 1;
-            lock.notifyAll();
+            notFull.signal();
+            return object;
+        } finally {
+            lock.unlock();
         }
-        return object;
-
     }
 }
