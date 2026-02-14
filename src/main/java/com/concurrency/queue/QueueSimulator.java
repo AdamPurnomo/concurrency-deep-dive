@@ -6,8 +6,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class QueueSimulator {
     private static final int QUEUE_CAPACITY = 5;
-    private static final int PRODUCER_COUNT = 5;
-    private static final int CONSUMER_COUNT = 5;
+    private static final int PRODUCER_COUNT = 50;
+    private static final int CONSUMER_COUNT = 50;
     private static final int ITEMS_PER_PRODUCER = 10;
 
     public void execute() {
