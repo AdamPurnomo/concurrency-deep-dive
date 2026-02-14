@@ -7,6 +7,7 @@ public class BlockingBoundedQueue<T> {
     private int tail;
     private int size;
 
+    private final Object lock;
 
     public BlockingBoundedQueue(int capacity) {
         if (capacity <= 0) {
@@ -17,6 +18,7 @@ public class BlockingBoundedQueue<T> {
         this.head = 0;
         this.tail = 0;
         this.size = 0;
+        this.lock = new Object();
     }
 
     public void put(T object) throws InterruptedException {
@@ -24,30 +26,30 @@ public class BlockingBoundedQueue<T> {
             throw new IllegalArgumentException("Inserted object cannot be null");
         }
 
-        synchronized (this) {
+        synchronized (lock) {
             while (size == capacity) {
-                this.wait(); // release the lock and acquire upon wakes up
+                lock.wait(); // release the lock and acquire upon wakes up
             }
 
             queue[tail] = object;
             tail = (tail + 1) % capacity;
             size += 1;
-            this.notifyAll(); // release lock that it is available to take
+            lock.notifyAll(); // release lock that it is available to take
         }
 
     }
 
     public T take() throws InterruptedException {
         T object;
-        synchronized (this) {
+        synchronized (lock) {
             while (size == 0) {
-                this.wait();
+                lock.wait();
             }
             object = queue[head];
             queue[head] = null;
             head = (head + 1) % capacity;
             size -= 1;
-            this.notifyAll();
+            lock.notifyAll();
         }
         return object;
 
