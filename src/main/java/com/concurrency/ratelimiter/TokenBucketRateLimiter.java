@@ -2,7 +2,6 @@
 
     import java.util.concurrent.atomic.AtomicReference;
     import java.util.concurrent.locks.LockSupport;
-    import java.util.function.UnaryOperator;
 
     public class TokenBucketRateLimiter {
         private final double capacity;
@@ -23,47 +22,57 @@
         }
 
         public void acquire(int permits) throws InterruptedException {
-
-            if (permits <= 0 || permits > capacity) {
-                throw new IllegalArgumentException(String.format("Permits must be between 1 and %d", capacity));
+            if (permits <= 0 || permits > (int) capacity) {
+                throw new IllegalArgumentException("Permits must be between 1 and " + (int) capacity);
             }
 
-            final UnaryOperator<State> takeIfSufficient = (prevState) -> {
-                if (prevState.remainingToken >= permits) {
-                    return new State(
-                            prevState.remainingToken - permits,
-                            prevState.lastRefillTimeNs
-                    );
-                }
-                return prevState;
-            };
-
-            state.getAndUpdate(this::refillToken);
-            while (state.getAndUpdate(takeIfSufficient).remainingToken < permits) {
+            while (true) {
                 if (Thread.interrupted()) {
                     throw new InterruptedException();
                 }
 
-                final var deficit = permits - state.get().remainingToken;
-                // Turns out it has been refilled, retry again
-                if (deficit <= 0) {continue;}
+                final long now = System.nanoTime();
+                // refill and take atomically
+                State prev = state.getAndUpdate(s -> refillAndTake(s, now, permits));
 
-                final var sleepTime = (long) Math.ceil(deficit / tokenRefillRate);
-                LockSupport.parkNanos(sleepTime);
-                state.updateAndGet(this::refillToken);
+                // We didn't know if the take (or rather the consumption was successful above).
+                // The way we check it is a bit hacky. Since we know the previous version (before refilling),
+                // we will try to replay the computation using the 'now' version passed to refill above.
+                // We then check if the refilled bucket has more than requested permits. If it does, the above operation
+                // was successful. This method is an indirect way to check if the above update operation was successful.
+                // If it was successful, we break from the loop.
+                State prevRefilled = refillAt(prev, now);
+                if (prevRefilled.remainingToken >= permits) break;
+
+                // Not enough: compute deficit based on the SAME refilled view
+                double deficit = permits - prevRefilled.remainingToken;
+                if (deficit <= 0) continue;
+
+                // There are cases where Math.ceil give 0 even though it should be 1. Hence, clamping the minimum to be 1
+                long sleepNs = Math.max(1L, (long) Math.ceil(deficit / tokenRefillRate));
+                LockSupport.parkNanos(sleepNs);
             }
         }
 
-        private State refillToken(final State prevState) {
-            final long time = System.nanoTime();
-            final var delta = time - prevState.lastRefillTimeNs;
-
-            // Just an additional guard in case System.nanoTime() isn't consistent (monotonically increasing
-            if (delta <= 0) {
-                return prevState;
+        private State refillAndTake(State s, long now, int permits) {
+            State r = refillAt(s, now);
+            if (r.remainingToken >= permits) {
+                return new State(r.remainingToken - permits, r.lastRefillTimeNs);
             }
-            final var token = prevState.remainingToken + tokenRefillRate * delta;
-            return new State(Math.min(token, capacity), time);
+            return r;
+        }
+
+        private State refillAt(State prev, long now) {
+            long delta = now - prev.lastRefillTimeNs;
+            if (delta <= 0) return prev;
+
+            // Optional: avoid churn when already full
+            if (prev.remainingToken >= capacity) {
+                return new State(capacity, now);
+            }
+
+            double tokens = prev.remainingToken + tokenRefillRate * delta; // tokens/ns
+            return new State(Math.min(tokens, capacity), now);
         }
 
         record State(
